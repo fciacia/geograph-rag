@@ -8,6 +8,7 @@ export interface MapDeposit {
   lat: number;
   lon: number;
   metal?: string;
+  fault?: string;
 }
 
 interface GeoMapProps {

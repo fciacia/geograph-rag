@@ -64,6 +64,12 @@ export default function GeoGraphDashboard() {
   const [mapDeposits, setMapDeposits] = useState<MapDeposit[]>([]);
   const [polygonPoints, setPolygonPoints] = useState<string>("460,270 560,240 630,320 530,370 440,330");
 
+  // Label and legend follow the plotted deposits; before the first query they describe the static demo overlay
+  const mapFaults = [...new Set(mapDeposits.map(d => d.fault).filter((f): f is string => !!f))];
+  const regionLabel = mapDeposits.length === 0
+    ? '广西大瑶山区域'
+    : mapFaults.length > 2 ? `${mapFaults.slice(0, 2).join(' · ')} 等 ${mapFaults.length} 条断裂` : mapFaults.join(' · ') || '查询结果';
+
   const handleSend = async () => {
     if (!query.trim()) return;
 
@@ -97,7 +103,7 @@ export default function GeoGraphDashboard() {
       const located = new Map<string, MapDeposit>();
       for (const rec of response.graph_records) {
         if (rec.deposit && rec.lat != null && rec.lon != null && !located.has(rec.deposit)) {
-          located.set(rec.deposit, { name: rec.deposit, lat: rec.lat, lon: rec.lon, metal: rec.metal });
+          located.set(rec.deposit, { name: rec.deposit, lat: rec.lat, lon: rec.lon, metal: rec.metal, fault: rec.fault });
         }
       }
       if (located.size > 0) setMapDeposits([...located.values()]);
@@ -230,25 +236,34 @@ export default function GeoGraphDashboard() {
             </div>
             <div className="bg-white/95 backdrop-blur-sm shadow-sm rounded-full px-3 py-2 flex items-center gap-1.5 text-xs font-medium text-stone-500 border border-stone-100">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              广西大瑶山区域
+              {regionLabel}
             </div>
           </div>
 
           {/* Legend */}
           <div className="absolute bottom-4 left-4 z-[1000] bg-white/95 backdrop-blur-sm rounded-2xl px-4 py-3 border border-stone-100 shadow-sm flex flex-col gap-2">
             <p className="text-[9px] font-bold uppercase tracking-widest text-stone-400">图例 Legend</p>
-            <div className="flex items-center gap-2 text-[11px] text-stone-600">
-              <div className="w-6 border-t-2 border-dashed border-amber-600" />
-              F3 构造断裂带
-            </div>
-            <div className="flex items-center gap-2 text-[11px] text-stone-600">
-              <div className="w-4 h-3 rounded-sm border-2 border-dashed border-amber-500 bg-amber-100/60" />
-              成矿靶区
-            </div>
-            <div className="flex items-center gap-2 text-[11px] text-stone-600">
-              <div className="w-3 h-3 rounded-full bg-amber-800 border-2 border-white shadow-sm" />
-              钻孔 ZK-01
-            </div>
+            {mapDeposits.length === 0 ? (
+              <>
+                <div className="flex items-center gap-2 text-[11px] text-stone-600">
+                  <div className="w-6 border-t-2 border-dashed border-amber-600" />
+                  F3 构造断裂带
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-stone-600">
+                  <div className="w-4 h-3 rounded-sm border-2 border-dashed border-amber-500 bg-amber-100/60" />
+                  成矿靶区
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-stone-600">
+                  <div className="w-3 h-3 rounded-full bg-amber-800 border-2 border-white shadow-sm" />
+                  钻孔 ZK-01
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 text-[11px] text-stone-600">
+                <div className="w-3 h-3 rounded-full bg-amber-500 border-2 border-white shadow-sm" />
+                匹配矿床 Deposit × {mapDeposits.length}
+              </div>
+            )}
           </div>
 
           {/* Real Map */}
