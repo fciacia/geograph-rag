@@ -55,7 +55,7 @@ def execute_cypher_retrieval(query_entities: list[str]) -> list[dict]:
     WITH max(score) AS best, collect({f: f, d: d, s: s, score: score}) AS rows
     UNWIND rows AS row
     WITH row WHERE row.score = best
-    WITH row.f AS f, row.d AS d, row.s AS s
+    WITH row.f AS f, row.d AS d, row.s AS s, row.score AS score
     OPTIONAL MATCH (d)-[:CITED_FROM]->(r:ReportSource)
     OPTIONAL MATCH (d)-[:ASSOCIATED_WITH]->(i:IntrusiveRock)
     RETURN 
@@ -67,7 +67,8 @@ def execute_cypher_retrieval(query_entities: list[str]) -> list[dict]:
         r.title AS source_doc, 
         r.page_number AS page,
         d.lat AS lat,
-        d.lon AS lon
+        d.lon AS lon,
+        score
     LIMIT 10
     """
     
@@ -77,3 +78,25 @@ def execute_cypher_retrieval(query_entities: list[str]) -> list[dict]:
     except Exception as e:
         print(f"Neo4j query failed, returning no records. Error: {e}")
         return []
+
+
+def fetch_graph_stats() -> dict:
+    """知识库规模统计 (Live counts for the dashboard KPI cards)"""
+    conn = Neo4jConnection()
+    return conn.query("""
+    RETURN COUNT { MATCH (n) } AS nodes,
+           COUNT { MATCH ()-[r]->() } AS relationships,
+           COUNT { MATCH (d:Deposit) } AS deposits,
+           COUNT { MATCH (r:ReportSource) } AS reports
+    """)[0]
+
+
+def fetch_all_deposits() -> list[dict]:
+    """全部带坐标的矿床，用于地图初始视图 (All located deposits, for the map's opening view)"""
+    conn = Neo4jConnection()
+    return conn.query("""
+    MATCH (d:Deposit) WHERE d.lat IS NOT NULL AND d.lon IS NOT NULL
+    OPTIONAL MATCH (d)-[:CONTROLLED_BY]-(f:Fault)
+    RETURN d.name AS deposit, d.metal_type AS metal, d.lat AS lat, d.lon AS lon, f.name AS fault
+    ORDER BY d.name
+    """)

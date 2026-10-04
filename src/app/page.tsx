@@ -20,7 +20,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, YAxis, CartesianGrid } from 'recharts';
-import { sendChatQuery, ChatResponse, GraphRecord } from '@/lib/api';
+import { streamChatQuery, fetchStats, fetchDeposits, GraphRecord, GraphStats } from '@/lib/api';
 import type { MapDeposit } from '@/components/GeoMap';
 import ReasoningChains from '@/components/ReasoningChains';
 import dynamic from 'next/dynamic';
@@ -38,14 +38,22 @@ const GeoMapDynamic = dynamic(() => import('@/components/GeoMap'), {
   )
 });
 
-const confidenceData = [
-  { name: 'Jan', value: 80 },
-  { name: 'Feb', value: 82 },
-  { name: 'Mar', value: 81 },
-  { name: 'Apr', value: 85 },
-  { name: 'May', value: 87 },
-  { name: 'Jun', value: 89.4 }
-];
+// One map marker per deposit (a deposit can appear in several records, one per cited report)
+function toMapDeposits(records: GraphRecord[]): MapDeposit[] {
+  const located = new Map<string, MapDeposit>();
+  for (const rec of records) {
+    if (rec.deposit && rec.lat != null && rec.lon != null && !located.has(rec.deposit)) {
+      located.set(rec.deposit, { name: rec.deposit, lat: rec.lat, lon: rec.lon, metal: rec.metal, fault: rec.fault });
+    }
+  }
+  return [...located.values()];
+}
+
+interface MatchScore {
+  value: number;   // percentage of query entities matched by the best deposit
+  matched: number;
+  total: number;
+}
 
 interface ChatMessage {
   role: 'user' | 'system';
@@ -57,19 +65,29 @@ interface ChatMessage {
 
 export default function GeoGraphDashboard() {
   const [query, setQuery] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  // retrieving: waiting for graph results; streaming: answer text arriving
+  const [phase, setPhase] = useState<'idle' | 'retrieving' | 'streaming'>('idle');
+  const isLoading = phase !== 'idle';
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [targetConfidence, setTargetConfidence] = useState<number>(89.4);
-  const [graphNodes, setGraphNodes] = useState<string[]>(['F3 断裂', '大瑶山地层']);
+  const [matchHistory, setMatchHistory] = useState<MatchScore[]>([]);
   const [graphRecords, setGraphRecords] = useState<GraphRecord[] | null>(null);
+  const [stats, setStats] = useState<GraphStats | null>(null);
+  const [allDeposits, setAllDeposits] = useState<MapDeposit[]>([]);
   const [mapDeposits, setMapDeposits] = useState<MapDeposit[]>([]);
-  const [polygonPoints, setPolygonPoints] = useState<string>("460,270 560,240 630,320 530,370 440,330");
+  const [targetRing, setTargetRing] = useState<number[][]>([]);
 
-  // Label and legend follow the plotted deposits; before the first query they describe the static demo overlay
+  useEffect(() => {
+    fetchStats().then(setStats).catch(() => setStats(null));
+    fetchDeposits().then(records => setAllDeposits(toMapDeposits(records))).catch(() => setAllDeposits([]));
+  }, []);
+
+  const latestMatch = matchHistory.at(-1);
+
+  // Label and legend follow the matched deposits; with no match the map shows the Guangxi overview
   const mapFaults = [...new Set(mapDeposits.map(d => d.fault).filter((f): f is string => !!f))];
   const regionLabel = mapDeposits.length === 0
-    ? '广西大瑶山区域'
+    ? `广西${allDeposits.length > 0 ? ` · ${allDeposits.length} 个已知矿床` : ''}`
     : mapFaults.length > 2 ? `${mapFaults.slice(0, 2).join(' · ')} 等 ${mapFaults.length} 条断裂` : mapFaults.join(' · ') || '查询结果';
 
   const handleSend = async () => {
@@ -78,54 +96,41 @@ export default function GeoGraphDashboard() {
     const userMessage = query;
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setQuery("");
-    setIsLoading(true);
+    setPhase('retrieving');
     setError(null);
 
     try {
-      const response = await sendChatQuery(userMessage);
-      
-      // Update state with backend response
-      setMessages(prev => [...prev, { 
-        role: 'system', 
-        content: response.prediction,
-        reasoning: response.reasoning_chain,
-        graph_records: response.graph_records,
-        confidence: response.confidence,
-      }]);
-
-      if (response.confidence) {
-        setTargetConfidence(response.confidence * 100);
-      }
-
-      if (response.reasoning_chain && response.reasoning_chain.length > 0) {
-        setGraphNodes(response.reasoning_chain);
-      }
-
-      setGraphRecords(response.graph_records);
-
-      // One map marker per deposit (a deposit can appear in several records, one per cited report)
-      const located = new Map<string, MapDeposit>();
-      for (const rec of response.graph_records) {
-        if (rec.deposit && rec.lat != null && rec.lon != null && !located.has(rec.deposit)) {
-          located.set(rec.deposit, { name: rec.deposit, lat: rec.lat, lon: rec.lon, metal: rec.metal, fault: rec.fault });
-        }
-      }
-      if (located.size > 0) setMapDeposits([...located.values()]);
-
-      // Very rough mapping of geo_coordinates to SVG polygon for the demo
-      if (response.geo_coordinates && response.geo_coordinates.coordinates[0]) {
-        // Just slightly shifting the default polygon to show it updated
-        setPolygonPoints("480,290 580,260 650,340 550,390 460,350");
-      }
-
-    } catch (err: any) {
-      setError(err.message || "Failed to fetch data.");
-      setMessages(prev => [...prev, { 
-        role: 'system', 
+      await streamChatQuery(userMessage, {
+        onContext: (ctx) => {
+          setPhase('streaming');
+          setMessages(prev => [...prev, {
+            role: 'system',
+            content: '',
+            reasoning: ctx.reasoning_chain,
+            graph_records: ctx.graph_records,
+            confidence: ctx.confidence,
+          }]);
+          setGraphRecords(ctx.graph_records);
+          setMapDeposits(toMapDeposits(ctx.graph_records));
+          setTargetRing(ctx.geo_coordinates.coordinates[0] ?? []);
+          const total = ctx.reasoning_chain.length;
+          if (total > 0) {
+            setMatchHistory(prev => [...prev, { value: ctx.confidence * 100, matched: Math.round(ctx.confidence * total), total }]);
+          }
+        },
+        onToken: (text) => setMessages(prev => {
+          const last = prev[prev.length - 1];
+          return [...prev.slice(0, -1), { ...last, content: last.content + text }];
+        }),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch data.");
+      setMessages(prev => [...prev, {
+        role: 'system',
         content: "Error: Could not process request. Please check the backend connection."
       }]);
     } finally {
-      setIsLoading(false);
+      setPhase('idle');
     }
   };
 
@@ -172,17 +177,13 @@ export default function GeoGraphDashboard() {
               <div className="p-2 bg-amber-50 rounded-xl">
                 <FileText className="w-5 h-5 text-amber-700" />
               </div>
-              <p className="text-stone-500 text-sm font-medium tracking-wide">历史报告解析</p>
+              <p className="text-stone-500 text-sm font-medium tracking-wide">知识库报告</p>
             </div>
             <div>
               <h3 className="text-5xl font-light text-stone-900 tracking-tight">
-                12,450 <span className="text-lg text-stone-400 font-normal ml-1">页</span>
+                {stats ? stats.reports.toLocaleString() : '—'} <span className="text-lg text-stone-400 font-normal ml-1">份</span>
               </h3>
-            </div>
-            <div className="h-12 w-full flex items-end gap-1.5 mt-8 opacity-80">
-              {[30, 40, 35, 50, 45, 60, 75, 80, 70, 90, 85, 100].map((val, i) => (
-                <div key={i} className="flex-1 bg-amber-100 rounded-t-sm transition-all duration-500 hover:bg-amber-200" style={{ height: `${val}%` }} />
-              ))}
+              <p className="text-xs text-stone-400 mt-3">{stats ? `覆盖 ${stats.deposits} 个矿床` : '无法连接知识图谱'}</p>
             </div>
           </div>
 
@@ -195,8 +196,9 @@ export default function GeoGraphDashboard() {
             </div>
             <div>
               <h3 className="text-5xl font-light text-stone-900 tracking-tight">
-                {842 + graphNodes.length}k <span className="text-lg text-stone-400 font-normal ml-1">节点</span>
+                {stats ? stats.nodes.toLocaleString() : '—'} <span className="text-lg text-stone-400 font-normal ml-1">节点</span>
               </h3>
+              <p className="text-xs text-stone-400 mt-3">{stats ? `${stats.relationships.toLocaleString()} 条关系` : '无法连接知识图谱'}</p>
             </div>
           </div>
 
@@ -205,17 +207,26 @@ export default function GeoGraphDashboard() {
               <div className="p-2 bg-stone-100 rounded-xl">
                 <Crosshair className="w-5 h-5 text-stone-700" />
               </div>
-              <p className="text-stone-500 text-sm font-medium tracking-wide">成矿靶区置信度</p>
+              <p className="text-stone-500 text-sm font-medium tracking-wide">图谱实体匹配度</p>
             </div>
             <div className="flex items-baseline gap-3 mb-6">
-              <h3 className="text-5xl font-light text-stone-900 tracking-tight">{(targetConfidence).toFixed(1)}<span className="text-3xl">%</span></h3>
-              <span className="text-sm font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">↑ Active</span>
+              <h3 className="text-5xl font-light text-stone-900 tracking-tight">
+                {latestMatch ? <>{latestMatch.value.toFixed(0)}<span className="text-3xl">%</span></> : '—'}
+              </h3>
+              {latestMatch && (
+                <span className={`text-sm font-medium px-2 py-1 rounded-lg ${latestMatch.matched > 0 ? 'text-emerald-600 bg-emerald-50' : 'text-stone-500 bg-stone-100'}`}>
+                  命中 {latestMatch.matched}/{latestMatch.total}
+                </span>
+              )}
             </div>
             <div className="flex-1 w-full min-h-[120px]">
+              {matchHistory.length === 0 ? (
+                <p className="text-xs text-stone-400">提问后显示每次查询的匹配度</p>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={confidenceData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <LineChart data={matchHistory} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f4" vertical={false} />
-                  <YAxis domain={['dataMin - 2', 'dataMax + 2']} hide />
+                  <YAxis domain={[0, 100]} hide />
                   <Line 
                     type="monotone" 
                     dataKey="value" 
@@ -226,6 +237,7 @@ export default function GeoGraphDashboard() {
                   />
                 </LineChart>
               </ResponsiveContainer>
+              )}
             </div>
           </div>
         </aside>
@@ -248,31 +260,31 @@ export default function GeoGraphDashboard() {
           <div className="absolute bottom-4 left-4 z-[1000] bg-white/95 backdrop-blur-sm rounded-2xl px-4 py-3 border border-stone-100 shadow-sm flex flex-col gap-2">
             <p className="text-[9px] font-bold uppercase tracking-widest text-stone-400">图例 Legend</p>
             {mapDeposits.length === 0 ? (
+              <div className="flex items-center gap-2 text-[11px] text-stone-600">
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-300 border-2 border-amber-900 shadow-sm" />
+                已知矿床 Deposit{allDeposits.length > 0 && ` × ${allDeposits.length}`}
+              </div>
+            ) : (
               <>
                 <div className="flex items-center gap-2 text-[11px] text-stone-600">
-                  <div className="w-6 border-t-2 border-dashed border-amber-600" />
-                  F3 构造断裂带
+                  <div className="w-3 h-3 rounded-full bg-amber-500 border-2 border-white shadow-sm" />
+                  匹配矿床 Deposit × {mapDeposits.length}
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-stone-600">
                   <div className="w-4 h-3 rounded-sm border-2 border-dashed border-amber-500 bg-amber-100/60" />
                   成矿靶区
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-stone-600">
-                  <div className="w-3 h-3 rounded-full bg-amber-800 border-2 border-white shadow-sm" />
-                  钻孔 ZK-01
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-300 border-2 border-amber-900 shadow-sm" />
+                  其他矿床
                 </div>
               </>
-            ) : (
-              <div className="flex items-center gap-2 text-[11px] text-stone-600">
-                <div className="w-3 h-3 rounded-full bg-amber-500 border-2 border-white shadow-sm" />
-                匹配矿床 Deposit × {mapDeposits.length}
-              </div>
             )}
           </div>
 
           {/* Real Map */}
           <div className="flex-1 w-full h-full" style={{minHeight: '500px'}}>
-            <GeoMapDynamic confidence={targetConfidence} deposits={mapDeposits} />
+            <GeoMapDynamic deposits={allDeposits} highlighted={mapDeposits} target={targetRing} />
           </div>
         </section>
 
@@ -387,7 +399,7 @@ export default function GeoGraphDashboard() {
                           </div>
                           {msg.confidence && (
                             <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                              {(msg.confidence * 100).toFixed(1)}% confidence
+                              实体匹配 {(msg.confidence * 100).toFixed(0)}%
                             </span>
                           )}
                         </div>
@@ -400,7 +412,7 @@ export default function GeoGraphDashboard() {
                 </div>
               ))}
 
-              {isLoading && (
+              {phase === 'retrieving' && (
                 <div className="flex gap-4 items-center text-amber-700 text-xs font-semibold uppercase tracking-wider">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Processing Geo-Data...

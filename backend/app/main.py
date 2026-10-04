@@ -1,8 +1,12 @@
+import json
 import os
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from app.agent import geograph_agent
+from app.agent import geograph_agent, extract_entities, graph_retrieval, build_generation_prompt, content_text, llm
+from app.database import fetch_graph_stats, fetch_all_deposits
+from langchain_core.messages import HumanMessage
 
 # ==========================================
 # 1. API 实例初始化配置 (FastAPI Initialization)
@@ -64,6 +68,50 @@ def target_polygon(records: list[GraphRecord], pad: float = 0.1) -> dict:
     w, e, s, n = min(lons) - pad, max(lons) + pad, min(lats) - pad, max(lats) + pad
     return {"type": "Polygon", "coordinates": [[[w, n], [e, n], [e, s], [w, s], [w, n]]]}
 
+def match_confidence(entities: list[str], graph_context: list[dict]) -> float:
+    """命中实体占比：最佳匹配矿床命中的查询实体数 / 实体总数 (Share of query entities matched by the best deposit)"""
+    if not entities or not graph_context:
+        return 0.0
+    return round(min(max(rec.get("score", 0) for rec in graph_context) / len(entities), 1.0), 3)
+
+def to_graph_records(graph_context: list[dict]) -> list[GraphRecord]:
+    return [GraphRecord(**{k: v for k, v in rec.items() if k in GraphRecord.model_fields}) for rec in graph_context]
+
+@app.get("/api/v1/stats")
+def stats():
+    """知识库实时规模 (Live knowledge-graph counts)"""
+    return fetch_graph_stats()
+
+@app.get("/api/v1/deposits", response_model=list[GraphRecord])
+def deposits():
+    """全部带坐标矿床 (All deposits with coordinates, for the map's opening view)"""
+    return to_graph_records(fetch_all_deposits())
+
+@app.post("/api/v1/chat/stream")
+def chat_stream(request: ChatRequest):
+    """
+    流式接口 (NDJSON): 先返回检索结果 {"type": "context", ...}，再逐段返回回答 {"type": "token", "text"}，最后 {"type": "done"}。
+    """
+    def events():
+        state = {"query": request.query}
+        state.update(extract_entities(state))
+        state.update(graph_retrieval(state))
+        records = to_graph_records(state["graph_context"])
+        yield json.dumps({
+            "type": "context",
+            "reasoning_chain": state["entities"],
+            "graph_records": [r.model_dump() for r in records],
+            "geo_coordinates": target_polygon(records),
+            "confidence": match_confidence(state["entities"], state["graph_context"]),
+        }, ensure_ascii=False) + "\n"
+        for chunk in llm.stream([HumanMessage(content=build_generation_prompt(state))]):
+            text = content_text(chunk.content)
+            if text:
+                yield json.dumps({"type": "token", "text": text}, ensure_ascii=False) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
+
 @app.post("/api/v1/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):
     """
@@ -75,18 +123,14 @@ def chat_endpoint(request: ChatRequest):
     entities = result_state.get("entities", [])
     graph_context = result_state.get("graph_context", [])
 
-    # Dynamic confidence: more entities matched = higher confidence (capped at 0.97)
-    base_confidence = 0.82
-    confidence = min(base_confidence + len(entities) * 0.02, 0.97)
-
-    graph_records = [GraphRecord(**{k: v for k, v in rec.items() if k in GraphRecord.model_fields}) for rec in graph_context]
+    graph_records = to_graph_records(graph_context)
 
     return ChatResponse(
         reasoning_chain=entities,
         prediction=result_state.get("final_response", ""),
         graph_records=graph_records,
         geo_coordinates=target_polygon(graph_records),
-        confidence=round(confidence, 3),
+        confidence=match_confidence(entities, graph_context),
     )
 
 if __name__ == "__main__":
