@@ -60,21 +60,7 @@ def graph_retrieval(state: AgentState) -> AgentState:
     """
     entities = state.get("entities", [])
     context = execute_cypher_retrieval(entities)
-    
-    # 为了保证 Demo 演示在没有真实 Neo4j 数据时也能正常运转，注入 Mock 数据
-    if not context:
-        context = [
-            {
-                "fault": "F3 地质断裂带",
-                "deposit": "ZK-01 隐伏矿化区",
-                "metal": "稀土/镓 (Rare Earth/Gallium)",
-                "stratum": "大瑶山二叠系地层",
-                "intrusive_rock": "花岗闪长岩侵入体",
-                "source_doc": "《广西地质调查报告1987》",
-                "page": 42
-            }
-        ]
-        
+
     return {"graph_context": context}
 
 def generate_response(state: AgentState) -> AgentState:
@@ -82,7 +68,7 @@ def generate_response(state: AgentState) -> AgentState:
     节点 3: 响应生成 (Response Generation with Citations)
     融合检索到的图谱结构化知识，进行严谨的推理生成，杜绝幻觉。
     """
-    context_str = "\n".join([str(item) for item in state.get("graph_context", [])])
+    context_str = "\n".join([str(item) for item in state.get("graph_context", [])]) or "（无匹配记录 / No matching records）"
     
     prompt = f"""
     你是一名国家级资深地质勘探专家。请依据以下【经过知识图谱严格验证的客观事实】来回答用户问题，严禁编造（Zero Hallucination）。
@@ -97,6 +83,7 @@ def generate_response(state: AgentState) -> AgentState:
     2. 必须明确指出推荐的勘探靶区（如钻孔编号）。
     3. 在结论或事实的段落末尾，必须严格注明引用来源，格式为 [文献名称，页码]。
     4. 语气专业、严谨，符合工业级报告标准。
+    5. 如果图谱事实为“无匹配记录”，请直接说明知识图谱中没有相关数据，不得给出推理、靶区或任何引用来源。
     """
     
     response = llm.invoke([HumanMessage(content=prompt)])

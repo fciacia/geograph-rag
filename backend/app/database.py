@@ -66,15 +66,5 @@ def execute_cypher_retrieval(query_entities: list[str]) -> list[dict]:
         records = conn.query(cypher_query, parameters={"entities": query_entities})
         return records
     except Exception as e:
-        print(f"Neo4j Connection Failed, using mock data. Error: {e}")
-        return [
-            {
-                "fault": "F3 构造断裂带",
-                "deposit": "深部隐伏金矿靶区",
-                "metal": "Au (Gold)",
-                "stratum": "寒武系地层",
-                "intrusive_rock": "隐伏花岗斑岩",
-                "source_doc": "地质调查报告_2023",
-                "page": 42
-            }
-        ]
+        print(f"Neo4j query failed, returning no records. Error: {e}")
+        return []
