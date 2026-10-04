@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -15,7 +16,8 @@ app = FastAPI(
 # 配置 CORS 允许前端跨域调用 (Allowing Next.js frontend to call this API)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 在生产环境中请指定明确的来源，如 "http://localhost:3000"
+    # 逗号分隔的允许来源 (Comma-separated allowed origins, e.g. the deployed frontend URL)
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
