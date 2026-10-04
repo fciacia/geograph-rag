@@ -48,7 +48,14 @@ def execute_cypher_retrieval(query_entities: list[str]) -> list[dict]:
     # 这里为了原型演示，采用基础的 CONTAINS 匹配。实际工程中可使用向量索引或全文本搜索。
     cypher_query = """
     MATCH (f:Fault)-[:CONTROLLED_BY]-(d:Deposit)-[:HOSTED_IN]-(s:Stratum)
-    WHERE any(entity IN $entities WHERE f.name CONTAINS entity OR s.name CONTAINS entity OR d.name CONTAINS entity)
+    // 按命中实体数打分，仅保留最高分的矿床 (Keep only deposits matching the most entities)
+    WITH f, d, s, size([entity IN $entities WHERE f.name CONTAINS entity OR s.name CONTAINS entity OR d.name CONTAINS entity
+              OR any(k IN coalesce(d.keywords, []) WHERE entity CONTAINS k)]) AS score
+    WHERE score > 0
+    WITH max(score) AS best, collect({f: f, d: d, s: s, score: score}) AS rows
+    UNWIND rows AS row
+    WITH row WHERE row.score = best
+    WITH row.f AS f, row.d AS d, row.s AS s
     OPTIONAL MATCH (d)-[:CITED_FROM]->(r:ReportSource)
     OPTIONAL MATCH (d)-[:ASSOCIATED_WITH]->(i:IntrusiveRock)
     RETURN 
@@ -58,7 +65,9 @@ def execute_cypher_retrieval(query_entities: list[str]) -> list[dict]:
         s.name AS stratum, 
         i.name AS intrusive_rock,
         r.title AS source_doc, 
-        r.page_number AS page
+        r.page_number AS page,
+        d.lat AS lat,
+        d.lon AS lon
     LIMIT 10
     """
     

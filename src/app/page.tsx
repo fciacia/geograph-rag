@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, YAxis, CartesianGrid } from 'recharts';
 import { sendChatQuery, ChatResponse, GraphRecord } from '@/lib/api';
+import type { MapDeposit } from '@/components/GeoMap';
 import dynamic from 'next/dynamic';
 
 // Dynamically import the map to avoid SSR issues (Leaflet requires browser APIs)
@@ -60,6 +61,7 @@ export default function GeoGraphDashboard() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [targetConfidence, setTargetConfidence] = useState<number>(89.4);
   const [graphNodes, setGraphNodes] = useState<string[]>(['F3 断裂', '大瑶山地层']);
+  const [mapDeposits, setMapDeposits] = useState<MapDeposit[]>([]);
   const [polygonPoints, setPolygonPoints] = useState<string>("460,270 560,240 630,320 530,370 440,330");
 
   const handleSend = async () => {
@@ -90,6 +92,15 @@ export default function GeoGraphDashboard() {
       if (response.reasoning_chain && response.reasoning_chain.length > 0) {
         setGraphNodes(response.reasoning_chain);
       }
+
+      // One map marker per deposit (a deposit can appear in several records, one per cited report)
+      const located = new Map<string, MapDeposit>();
+      for (const rec of response.graph_records) {
+        if (rec.deposit && rec.lat != null && rec.lon != null && !located.has(rec.deposit)) {
+          located.set(rec.deposit, { name: rec.deposit, lat: rec.lat, lon: rec.lon, metal: rec.metal });
+        }
+      }
+      if (located.size > 0) setMapDeposits([...located.values()]);
 
       // Very rough mapping of geo_coordinates to SVG polygon for the demo
       if (response.geo_coordinates && response.geo_coordinates.coordinates[0]) {
@@ -242,7 +253,7 @@ export default function GeoGraphDashboard() {
 
           {/* Real Map */}
           <div className="flex-1 w-full h-full" style={{minHeight: '500px'}}>
-            <GeoMapDynamic confidence={targetConfidence} />
+            <GeoMapDynamic confidence={targetConfidence} deposits={mapDeposits} />
           </div>
         </section>
 

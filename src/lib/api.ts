@@ -6,6 +6,8 @@ export interface GraphRecord {
   intrusive_rock?: string;
   source_doc?: string;
   page?: number;
+  lat?: number;
+  lon?: number;
 }
 
 export interface ChatResponse {

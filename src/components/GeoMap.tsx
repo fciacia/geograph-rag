@@ -1,9 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { LayerGroup } from "leaflet";
+
+export interface MapDeposit {
+  name: string;
+  lat: number;
+  lon: number;
+  metal?: string;
+}
 
 interface GeoMapProps {
   confidence?: number;
+  deposits?: MapDeposit[];
 }
 
 type MapLayer = "satellite" | "topo";
@@ -46,11 +55,13 @@ const TILE_LAYERS = {
   },
 };
 
-export default function GeoMap({ confidence = 89.4 }: GeoMapProps) {
+export default function GeoMap({ confidence = 89.4, deposits = [] }: GeoMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
   const labelsLayerRef = useRef<any>(null);
+  const demoLayerRef = useRef<LayerGroup | null>(null);
+  const depositLayerRef = useRef<LayerGroup | null>(null);
   const [activeLayer, setActiveLayer] = useState<MapLayer>("satellite");
 
   const switchLayer = (layer: MapLayer) => {
@@ -109,13 +120,17 @@ export default function GeoMap({ confidence = 89.4 }: GeoMapProps) {
       // Custom zoom control
       L.control.zoom({ position: "bottomright" }).addTo(map);
 
+      // Static demo overlays, replaced by real deposits after the first query
+      const demo = L.layerGroup().addTo(map);
+      demoLayerRef.current = demo;
+
       // ── F3 Fault Line ──
       L.polyline(FAULT_LINE, {
         color: "#fbbf24",
         weight: 3,
         dashArray: "12 7",
         opacity: 0.95,
-      }).addTo(map);
+      }).addTo(demo);
 
       // Fault label
       L.marker([23.478, 109.193], {
@@ -136,7 +151,7 @@ export default function GeoMap({ confidence = 89.4 }: GeoMapProps) {
           ">F3 构造断裂带</div>`,
           iconAnchor: [70, 12],
         }),
-      }).addTo(map);
+      }).addTo(demo);
 
       // ── Target Polygon ──
       L.polygon(TARGET_POLYGON, {
@@ -145,7 +160,7 @@ export default function GeoMap({ confidence = 89.4 }: GeoMapProps) {
         fillOpacity: 0.25,
         weight: 2.5,
         dashArray: "7 5",
-      }).addTo(map);
+      }).addTo(demo);
 
       // ── Drill Point ──
       const drillIcon = L.divIcon({
@@ -163,7 +178,7 @@ export default function GeoMap({ confidence = 89.4 }: GeoMapProps) {
         iconAnchor: [11, 11],
       });
 
-      const drillMarker = L.marker(DRILL_POINT, { icon: drillIcon }).addTo(map);
+      const drillMarker = L.marker(DRILL_POINT, { icon: drillIcon }).addTo(demo);
 
       const popupHtml = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-width:230px;padding:0;">
@@ -202,9 +217,56 @@ export default function GeoMap({ confidence = 89.4 }: GeoMapProps) {
         mapInstanceRef.current = null;
         tileLayerRef.current = null;
         labelsLayerRef.current = null;
+        demoLayerRef.current = null;
+        depositLayerRef.current = null;
       }
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || deposits.length === 0) return;
+
+    import("leaflet").then((L) => {
+      if (demoLayerRef.current) {
+        map.removeLayer(demoLayerRef.current);
+        demoLayerRef.current = null;
+      }
+      if (depositLayerRef.current) map.removeLayer(depositLayerRef.current);
+      const group = L.layerGroup().addTo(map);
+      depositLayerRef.current = group;
+
+      const depositIcon = L.divIcon({
+        className: "",
+        html: `<div style="
+          width:14px;height:14px;
+          background:#f59e0b;
+          border-radius:50%;
+          border:3px solid white;
+          box-shadow:0 0 0 4px rgba(245,158,11,0.35), 0 2px 10px rgba(0,0,0,0.4);
+        "></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+      });
+
+      for (const d of deposits) {
+        L.marker([d.lat, d.lon], { icon: depositIcon })
+          .bindPopup(`
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-width:200px;padding:11px 15px;display:flex;flex-direction:column;gap:6px;">
+              <span style="color:#1c1917;font-size:13px;font-weight:700;">${d.name}</span>
+              ${d.metal ? `<span style="color:#b45309;font-size:12px;font-weight:700;">${d.metal}</span>` : ""}
+              <span style="color:#a8a29e;font-size:11px;">≈ ${d.lat.toFixed(2)}°N, ${d.lon.toFixed(2)}°E</span>
+            </div>
+          `, { maxWidth: 280, offset: [0, -10], className: "geo-popup" })
+          .addTo(group);
+      }
+
+      map.fitBounds(
+        L.latLngBounds(deposits.map((d) => [d.lat, d.lon] as [number, number])),
+        { padding: [60, 60], maxZoom: 10 }
+      );
+    });
+  }, [deposits]);
 
   return (
     <>

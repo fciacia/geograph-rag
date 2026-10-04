@@ -37,6 +37,8 @@ class GraphRecord(BaseModel):
     intrusive_rock: str | None = None
     source_doc: str | None = None
     page: int | None = None
+    lat: float | None = None
+    lon: float | None = None
 
 class ChatResponse(BaseModel):
     reasoning_chain: list[str]
@@ -52,6 +54,15 @@ class ChatResponse(BaseModel):
 def health_check():
     """系统健康检查 (Health Check Endpoint)"""
     return {"status": "healthy", "engine": "GeoGraph-RAG Active"}
+
+def target_polygon(records: list[GraphRecord], pad: float = 0.1) -> dict:
+    """匹配矿床外包矩形作为预测靶区 (Padded bounding box around matched deposits, GeoJSON [lon, lat])"""
+    points = [(r.lon, r.lat) for r in records if r.lat is not None and r.lon is not None]
+    if not points:
+        return {"type": "Polygon", "coordinates": []}
+    lons, lats = zip(*points)
+    w, e, s, n = min(lons) - pad, max(lons) + pad, min(lats) - pad, max(lats) + pad
+    return {"type": "Polygon", "coordinates": [[[w, n], [e, n], [e, s], [w, s], [w, n]]]}
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):
@@ -74,12 +85,7 @@ def chat_endpoint(request: ChatRequest):
         reasoning_chain=entities,
         prediction=result_state.get("final_response", ""),
         graph_records=graph_records,
-        geo_coordinates={
-            "type": "Polygon",
-            "coordinates": [
-                [[109.213, 23.456], [109.220, 23.450], [109.218, 23.440], [109.210, 23.445], [109.213, 23.456]]
-            ]
-        },
+        geo_coordinates=target_polygon(graph_records),
         confidence=round(confidence, 3),
     )
 
