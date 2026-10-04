@@ -120,7 +120,7 @@ export default function GeoGraphDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 font-sans selection:bg-amber-200/50 flex flex-col p-4 md:p-8">
+    <div className="min-h-screen lg:h-screen lg:min-h-[960px] bg-stone-50 text-stone-900 font-sans selection:bg-amber-200/50 flex flex-col p-4 md:p-8">
       {/* Header */}
       <header className="h-20 bg-transparent flex items-center justify-between shrink-0 z-10 px-2 mb-4">
         <div className="flex items-center gap-4">
@@ -153,7 +153,7 @@ export default function GeoGraphDashboard() {
       </header>
 
       {/* Main Content Layout */}
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
+      <main className="flex-1 grid grid-cols-1 lg:grid-cols-4 lg:grid-rows-[minmax(0,1fr)] gap-6 min-h-0">
         
         {/* Left Column: KPI Sidebar */}
         <aside className="lg:col-span-1 flex flex-col gap-6">
@@ -258,9 +258,9 @@ export default function GeoGraphDashboard() {
         </section>
 
         {/* Right Column: Information & Copilot Panel */}
-        <aside className="lg:col-span-1 flex flex-col gap-6 h-full">
+        <aside className="lg:col-span-1 flex flex-col gap-6 h-full min-h-0">
           {/* Top Half: Relational Graph */}
-          <div className="flex-[0.9] bg-white shadow-[0_8px_30px_rgba(0,0,0,0.04)] rounded-3xl p-6 flex flex-col relative overflow-hidden border border-stone-100">
+          <div className="flex-[0.9] min-h-0 bg-white shadow-[0_8px_30px_rgba(0,0,0,0.04)] rounded-3xl p-6 flex flex-col relative overflow-hidden border border-stone-100">
             <h3 className="text-stone-900 text-sm font-semibold mb-4 flex items-center gap-2">
               <Network className="w-4 h-4 text-stone-400" />
               知识图谱推演
@@ -288,7 +288,7 @@ export default function GeoGraphDashboard() {
           </div>
 
           {/* Bottom Half: System Copilot / Assistant */}
-          <div className="flex-[1.1] bg-white shadow-[0_8px_30px_rgba(0,0,0,0.04)] rounded-3xl flex flex-col overflow-hidden border border-stone-100">
+          <div className="flex-[1.1] min-h-0 bg-white shadow-[0_8px_30px_rgba(0,0,0,0.04)] rounded-3xl flex flex-col overflow-hidden border border-stone-100">
             <div className="px-6 py-4 border-b border-stone-50 bg-white">
               <h3 className="text-stone-900 text-sm font-semibold flex items-center gap-2">
                 <ClipboardList className="w-4 h-4 text-stone-400" />
