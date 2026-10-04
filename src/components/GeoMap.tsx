@@ -93,8 +93,12 @@ export default function GeoMap({ confidence = 89.4, deposits = [] }: GeoMapProps
 
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
+    // Leaflet loads async; if this effect is cleaned up first (React Strict Mode re-runs effects in dev),
+    // skip init so the re-run is the only one that creates the map
+    let cancelled = false;
 
     import("leaflet").then((L) => {
+      if (cancelled || !mapRef.current) return;
       delete (L.Icon.Default.prototype as any)._getIconUrl;
 
       const map = L.map(mapRef.current!, {
@@ -213,6 +217,7 @@ export default function GeoMap({ confidence = 89.4, deposits = [] }: GeoMapProps
     });
 
     return () => {
+      cancelled = true;
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
