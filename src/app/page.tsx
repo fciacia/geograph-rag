@@ -22,6 +22,7 @@ import {
 import { LineChart, Line, ResponsiveContainer, YAxis, CartesianGrid } from 'recharts';
 import { sendChatQuery, ChatResponse, GraphRecord } from '@/lib/api';
 import type { MapDeposit } from '@/components/GeoMap';
+import ReasoningChains from '@/components/ReasoningChains';
 import dynamic from 'next/dynamic';
 
 // Dynamically import the map to avoid SSR issues (Leaflet requires browser APIs)
@@ -61,6 +62,7 @@ export default function GeoGraphDashboard() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [targetConfidence, setTargetConfidence] = useState<number>(89.4);
   const [graphNodes, setGraphNodes] = useState<string[]>(['F3 断裂', '大瑶山地层']);
+  const [graphRecords, setGraphRecords] = useState<GraphRecord[] | null>(null);
   const [mapDeposits, setMapDeposits] = useState<MapDeposit[]>([]);
   const [polygonPoints, setPolygonPoints] = useState<string>("460,270 560,240 630,320 530,370 440,330");
 
@@ -98,6 +100,8 @@ export default function GeoGraphDashboard() {
       if (response.reasoning_chain && response.reasoning_chain.length > 0) {
         setGraphNodes(response.reasoning_chain);
       }
+
+      setGraphRecords(response.graph_records);
 
       // One map marker per deposit (a deposit can appear in several records, one per cited report)
       const located = new Map<string, MapDeposit>();
@@ -282,23 +286,7 @@ export default function GeoGraphDashboard() {
             </h3>
             
             <div className="flex-1 relative bg-stone-50 rounded-2xl overflow-hidden border border-stone-100/60 p-4 overflow-y-auto">
-              <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                <path d="M 50 60 L 150 120" stroke="#d6d3d1" strokeWidth="1.5" />
-                <path d="M 150 120 L 100 200" stroke="#d6d3d1" strokeWidth="1.5" strokeDasharray="4 4" />
-                <path d="M 150 120 L 220 180" stroke="#d6d3d1" strokeWidth="1.5" />
-              </svg>
-              
-              {/* Dynamic graph nodes representation */}
-              <div className="relative z-10 flex flex-col gap-6">
-                {graphNodes.map((node, i) => (
-                   <div key={i} className={`self-${i % 2 === 0 ? 'start' : 'end'} ml-${i*4} flex flex-col items-center gap-2 mt-4`}>
-                    <div className="px-3 py-1.5 bg-white shadow-sm border border-stone-200 rounded-full flex items-center gap-2 text-xs font-semibold text-stone-700">
-                      <div className="w-2 h-2 rounded-full bg-amber-500" />
-                      {node}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <ReasoningChains records={graphRecords} />
             </div>
           </div>
 
